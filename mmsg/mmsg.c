@@ -42,6 +42,7 @@ static int32_t eflag;
 static int32_t kflag;
 static int32_t bflag;
 static int32_t Aflag;
+static int32_t aflag;
 
 static uint32_t occ, seltags, total_clients, urg;
 
@@ -63,6 +64,17 @@ struct output {
 	uint32_t name;
 };
 static DYNARR_DEF(struct output) outputs;
+
+struct window {
+	int32_t x, y, width, height;
+	char *output;
+	char *appid;
+	char *title;
+};
+static DYNARR_DEF(struct window) windows;
+
+static int32_t completed_outputs = 0;
+static int32_t total_outputs = 0;
 
 static struct wl_display *display;
 static struct zdwl_ipc_manager_v2 *dwl_ipc_manager;
@@ -310,6 +322,72 @@ static void dwl_ipc_output_floating(void *data,
 	printf("floating %u\n", is_floating);
 }
 
+static void dwl_ipc_output_window(void *data,
+								  struct zdwl_ipc_output_v2 *dwl_ipc_output,
+								  const char *output,
+								  int32_t x, int32_t y, int32_t width,
+								  int32_t height, const char *appid,
+								  const char *title) {
+	char *out_str, *appid_str, *title_str;
+
+	if (!aflag)
+		return;
+
+	if (data && strcmp(data, output) != 0)
+		return;
+
+	out_str = strdup(output);
+	appid_str = strdup(appid ? appid : "");
+	title_str = strdup(title ? title : "");
+
+	if (!out_str || !appid_str || !title_str) {
+		free(out_str);
+		free(appid_str);
+		free(title_str);
+		return;
+	}
+
+	struct window w = {
+		.x = x,
+		.y = y,
+		.width = width,
+		.height = height,
+		.output = out_str,
+		.appid = appid_str,
+		.title = title_str
+	};
+	DYNARR_PUSH(&windows, w);
+}
+
+static void dwl_ipc_output_windows_end(void *data,
+									   struct zdwl_ipc_output_v2 *dwl_ipc_output) {
+	if (!aflag)
+		return;
+
+	completed_outputs++;
+
+	if (completed_outputs >= total_outputs) {
+		for (size_t i = 0; i < windows.len; i++) {
+			struct window *w = &windows.arr[i];
+			printf("%s %d,%d %dx%d \"%s\" \"%s\"\n",
+				w->output, w->x, w->y, w->width, w->height,
+				w->appid, w->title);
+			free(w->output);
+			free(w->appid);
+			free(w->title);
+		}
+		DYNARR_FINI(&windows);
+
+		if (!(mode & WATCH))
+			exit(0);
+
+		completed_outputs = 0;
+		windows.arr = NULL;
+		windows.len = windows.cap = 0;
+		DYNARR_INIT(&windows);
+	}
+}
+
 static void dwl_ipc_output_frame(void *data,
 								 struct zdwl_ipc_output_v2 *dwl_ipc_output) {
 	if (mode & SET) {
@@ -407,6 +485,11 @@ static void dwl_ipc_output_frame(void *data,
 		}
 	}
 	fflush(stdout);
+
+	if ((mode & WATCH) && aflag) {
+		zdwl_ipc_output_v2_get_windows(dwl_ipc_output);
+		wl_display_flush(display);
+	}
 }
 
 static const struct zdwl_ipc_output_v2_listener dwl_ipc_output_listener = {
@@ -427,6 +510,8 @@ static const struct zdwl_ipc_output_v2_listener dwl_ipc_output_listener = {
 	.kb_layout = dwl_ipc_output_kb_layout,
 	.keymode = dwl_ipc_output_keymode,
 	.scalefactor = dwl_ipc_output_scalefactor,
+	.window = dwl_ipc_output_window,
+	.windows_end = dwl_ipc_output_windows_end,
 	.frame = dwl_ipc_output_frame,
 };
 
@@ -447,6 +532,12 @@ static void wl_output_name(void *data, struct wl_output *output,
 		zdwl_ipc_manager_v2_get_output(dwl_ipc_manager, output);
 	zdwl_ipc_output_v2_add_listener(dwl_ipc_output, &dwl_ipc_output_listener,
 									output_name ? NULL : strdup(name));
+
+	if (aflag) {
+		total_outputs++;
+		zdwl_ipc_output_v2_get_windows(dwl_ipc_output);
+		wl_display_flush(display);
+	}
 }
 
 static const struct wl_output_listener output_listener = {
@@ -506,7 +597,7 @@ static void usage(void) {
 			"\tmmsg [-OTLq]\n"
 			"\tmmsg [-o <output>] -s [-t <tags>] [-l <layout>] [-c <tags>] [-d "
 			"<cmd>,<arg1>,<arg2>,<arg3>,<arg4>,<arg5>]\n"
-			"\tmmsg [-o <output>] (-g | -w) [-OotlcvmfxekbA]\n"
+			"\tmmsg [-o <output>] (-g | -w) [-OotlcvmfxekbAa]\n"
 			"\n"
 			"OPERATION MODES:\n"
 			"\t-g           Get values (tags, layout, focused client)\n"
@@ -534,6 +625,7 @@ static void usage(void) {
 			"\t-k           Get current keyboard layout\n"
 			"\t-b           Get current keybind mode\n"
 			"\t-A           Get scale factor of monitor\n"
+			"\t-a           Get all visible windows\n"
 			"\n"
 			"SET OPTIONS (used with -s):\n"
 			"\t-o <output>         Select output (monitor)\n"
@@ -788,6 +880,12 @@ int32_t main(int32_t argc, char *argv[]) {
 			usage();
 		mode |= GET;
 		break;
+	case 'a':
+		aflag = 1;
+		if (mode == SET)
+			usage();
+		mode |= GET;
+		break;
 	default:
 		fprintf(stderr, "bad option %c\n", ARGC());
 		usage();
@@ -795,10 +893,15 @@ int32_t main(int32_t argc, char *argv[]) {
 	ARGEND
 	if (mode == NONE)
 		usage();
+	if (aflag) {
+		DYNARR_INIT(&windows);
+		completed_outputs = 0;
+		total_outputs = 0;
+	}
 	if (mode & GET && !output_name &&
 		!(oflag || tflag || lflag || Oflag || Tflag || Lflag || cflag ||
 		  vflag || mflag || fflag || xflag || eflag || kflag || bflag ||
-		  Aflag || dflag))
+		  Aflag || dflag || aflag))
 		oflag = tflag = lflag = cflag = vflag = mflag = fflag = xflag = eflag =
 			kflag = bflag = Aflag = 1;
 
@@ -816,6 +919,10 @@ int32_t main(int32_t argc, char *argv[]) {
 		die("bad dwl-ipc protocol");
 
 	wl_display_roundtrip(display);
+
+	if (aflag) {
+		wl_display_roundtrip(display);
+	}
 
 	if (mode == WATCH)
 		while (wl_display_dispatch(display) != -1)

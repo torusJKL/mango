@@ -177,6 +177,32 @@ I would probably just submit raphi's patchset but I don't think that would be po
       <arg name="arg5" type="string" summary="arg5."/>
     </request>
 
+    <request name="get_windows" since="2">
+      <description summary="Get all visible windows">
+        Requests a list of all visible windows on this output.
+        The compositor will reply with window events followed by windows_end.
+      </description>
+    </request>
+
+    <event name="window" since="2">
+      <description summary="Window information">
+        Information about a visible window.
+      </description>
+      <arg name="output" type="string" summary="output name of the window"/>
+      <arg name="x" type="int" summary="x coordinate of the window"/>
+      <arg name="y" type="int" summary="y coordinate of the window"/>
+      <arg name="width" type="int" summary="width of the window"/>
+      <arg name="height" type="int" summary="height of the window"/>
+      <arg name="appid" type="string" summary="app id of the window"/>
+      <arg name="title" type="string" summary="title of the window"/>
+    </event>
+
+    <event name="windows_end" since="2">
+      <description summary="End of windows list">
+        Sent after all window events to indicate the list is complete.
+      </description>
+    </event>
+
     <!-- Version 2 -->
     <event name="fullscreen" since="2">
       <description summary="Update fullscreen status">

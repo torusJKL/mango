@@ -687,6 +687,10 @@ uint32_t parse_mod(const char *mod_str) {
 				mod |= WLR_MODIFIER_MOD3;
 				match_success = true;
 			}
+			if (!strcmp(token, "meh")) {
+				mod |= WLR_MODIFIER_CTRL | WLR_MODIFIER_SHIFT | WLR_MODIFIER_ALT;
+				match_success = true;
+			}
 			if (!strcmp(token, "none")) {
 				match_success = true;
 			}
